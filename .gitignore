@@ -1,0 +1,15 @@
+bin/
+obj/
+
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+run.log
+run.err.log
+
+wwwroot/uploads/
+
+.vs/
+.vscode/
