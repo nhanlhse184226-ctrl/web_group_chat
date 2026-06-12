@@ -2,6 +2,14 @@
 
 Web group chat built with ASP.NET Core Razor Pages and SignalR.
 
+## Architecture
+
+This project follows a simple 3-layer structure:
+
+- Presentation layer: Razor Pages, SignalR Hub, static UI files
+- Business layer: chat and file upload services
+- Data access layer: in-memory user repository and local file storage repository
+
 ## Features
 
 - Real-time group chat with SignalR

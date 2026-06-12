@@ -1,18 +1,16 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using web_group_chat.Services;
 
 namespace web_group_chat.Pages
 {
     public class IndexModel : PageModel
     {
-        const long MaxUploadBytes = 25 * 1024 * 1024;
-        private readonly ILogger<IndexModel> _logger;
-        private readonly IWebHostEnvironment _environment;
+        private readonly IFileUploadService fileUploadService;
 
-        public IndexModel(ILogger<IndexModel> logger, IWebHostEnvironment environment)
+        public IndexModel(IFileUploadService fileUploadService)
         {
-            _logger = logger;
-            _environment = environment;
+            this.fileUploadService = fileUploadService;
         }
 
         public void OnGet()
@@ -22,33 +20,15 @@ namespace web_group_chat.Pages
 
         public async Task<IActionResult> OnPostUploadFileAsync(IFormFile? chatFile)
         {
-            if (chatFile == null || chatFile.Length == 0)
-                return BadRequest(new { error = "Choose a file first." });
-
-            if (chatFile.Length > MaxUploadBytes)
-                return BadRequest(new { error = "File must be 25 MB or smaller." });
-
-            string uploadsRoot = Path.Combine(_environment.WebRootPath, "uploads");
-            Directory.CreateDirectory(uploadsRoot);
-
-            string originalName = Path.GetFileName(chatFile.FileName);
-            string extension = Path.GetExtension(originalName);
-            string storedName = $"{Guid.NewGuid():N}{extension}";
-            string storedPath = Path.Combine(uploadsRoot, storedName);
-
-            await using (var fileStream = System.IO.File.Create(storedPath))
+            try
             {
-                await chatFile.CopyToAsync(fileStream);
+                var uploadedFile = await fileUploadService.UploadAsync(chatFile, HttpContext.RequestAborted);
+                return new JsonResult(uploadedFile);
             }
-
-            _logger.LogInformation("Uploaded chat file {FileName} ({FileSize} bytes).", originalName, chatFile.Length);
-
-            return new JsonResult(new
+            catch (InvalidOperationException ex)
             {
-                fileName = originalName,
-                fileSize = chatFile.Length,
-                fileUrl = Url.Content($"~/uploads/{storedName}")
-            });
+                return BadRequest(new { error = ex.Message });
+            }
         }
     }
 }

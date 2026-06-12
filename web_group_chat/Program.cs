@@ -1,6 +1,8 @@
 namespace web_group_chat
 {
     using web_group_chat.Hubs;
+    using web_group_chat.Repositories;
+    using web_group_chat.Services;
 
     public class Program
     {
@@ -11,6 +13,10 @@ namespace web_group_chat
             // Add services to the container.
             builder.Services.AddRazorPages();
             builder.Services.AddSignalR();
+            builder.Services.AddSingleton<IChatUserRepository, InMemoryChatUserRepository>();
+            builder.Services.AddScoped<IFileStorageRepository, LocalFileStorageRepository>();
+            builder.Services.AddScoped<IChatService, ChatService>();
+            builder.Services.AddScoped<IFileUploadService, FileUploadService>();
 
             var app = builder.Build();
 
