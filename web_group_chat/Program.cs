@@ -1,8 +1,6 @@
 namespace web_group_chat
 {
     using web_group_chat.Hubs;
-    using web_group_chat.Repositories;
-    using web_group_chat.Services;
 
     public class Program
     {
@@ -11,19 +9,20 @@ namespace web_group_chat
             var builder = WebApplication.CreateBuilder(args);
 
             // Add services to the container.
-            builder.Services.AddRazorPages();
-            builder.Services.AddSignalR();
-            builder.Services.AddSingleton<IChatUserRepository, InMemoryChatUserRepository>();
-            builder.Services.AddScoped<IFileStorageRepository, LocalFileStorageRepository>();
-            builder.Services.AddScoped<IChatService, ChatService>();
-            builder.Services.AddScoped<IFileUploadService, FileUploadService>();
+            builder.Services.AddControllersWithViews();
+            builder.Services.AddSignalR(options =>
+            {
+                // Inline images travel as base64 over SignalR. A 5 MB picture
+                // becomes ~6.7 MB of base64, so allow 10 MB of headroom.
+                options.MaximumReceiveMessageSize = 10 * 1024 * 1024;
+            });
 
             var app = builder.Build();
 
             // Configure the HTTP request pipeline.
             if (!app.Environment.IsDevelopment())
             {
-                app.UseExceptionHandler("/Error");
+                app.UseExceptionHandler("/Home/Error");
                 // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
                 app.UseHsts();
                 app.UseHttpsRedirection();
@@ -35,7 +34,9 @@ namespace web_group_chat
 
             app.UseAuthorization();
 
-            app.MapRazorPages();
+            app.MapControllerRoute(
+                name: "default",
+                pattern: "{controller=Home}/{action=Index}/{id?}");
             app.MapHub<ChatHub>("/chatHub");
 
             app.Run();

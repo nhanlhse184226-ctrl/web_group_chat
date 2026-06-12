@@ -7,15 +7,45 @@
     const messagesList = document.getElementById("messagesList");
     const usersList = document.getElementById("usersList");
     const onlineCount = document.getElementById("onlineCount");
-    const fileInput = document.getElementById("fileInput");
     const typingIndicator = document.getElementById("typingIndicator");
-    const uploadStatus = document.getElementById("uploadStatus");
-    const antiForgeryToken = document.querySelector("#antiForgeryForm input[name='__RequestVerificationToken']")?.value ?? "";
+    const emojiButton = document.getElementById("emojiButton");
+    const emojiPicker = document.getElementById("emojiPicker");
+    const stickerButton = document.getElementById("stickerButton");
+    const stickerPicker = document.getElementById("stickerPicker");
+    const attachInput = document.getElementById("attachInput");
+    const attachPreview = document.getElementById("attachPreview");
+    const lightbox = document.getElementById("lightbox");
+    const lightboxImage = document.getElementById("lightboxImage");
+
+    const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+    const ALLOWED_FILE_EXTENSIONS = new Set([
+        "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx",
+        "txt", "zip", "rar", "jpg", "jpeg", "png", "gif", "webp"
+    ]);
+    const MAX_BYTES = 5 * 1024 * 1024;
+
+    // Local sticker metadata. URLs resolve to files under wwwroot/stickers and
+    // the server only relays sticker URLs that point inside /stickers/.
+    const STICKERS = [
+        { id: "happy", name: "Happy", url: "/stickers/happy.svg" },
+        { id: "laugh", name: "Laugh", url: "/stickers/laugh.svg" },
+        { id: "love", name: "In Love", url: "/stickers/love.svg" },
+        { id: "cool", name: "Cool", url: "/stickers/cool.svg" },
+        { id: "sad", name: "Sad", url: "/stickers/sad.svg" },
+        { id: "cry", name: "Crying", url: "/stickers/cry.svg" },
+        { id: "angry", name: "Angry", url: "/stickers/angry.svg" },
+        { id: "wink", name: "Wink", url: "/stickers/wink.svg" },
+        { id: "thumbsup", name: "Thumbs Up", url: "/stickers/thumbsup.svg" },
+        { id: "cute", name: "Cute", url: "/stickers/cute.png" },
+        { id: "frog", name: "Frog", url: "/stickers/frog.png" },
+        { id: "heart", name: "Heart", url: "/stickers/heart.png" }
+    ];
 
     let currentUsername = localStorage.getItem("chatUsername") || "";
     let isTyping = false;
     let typingStopTimer = 0;
     const typingUsers = new Map();
+    let pendingAttachment = null; // { kind: "image" | "file", dataUrl, name, type, size }
 
     const connection = new signalR.HubConnectionBuilder()
         .withUrl("/chatHub")
@@ -31,6 +61,10 @@
         connectionStatus.classList.toggle("online", isOnline);
     }
 
+    function scrollToBottom() {
+        messagesList.scrollTop = messagesList.scrollHeight;
+    }
+
     function formatFileSize(bytes) {
         const units = ["B", "KB", "MB", "GB"];
         let value = bytes;
@@ -44,8 +78,14 @@
         return `${value.toFixed(value >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
     }
 
-    function scrollToBottom() {
-        messagesList.scrollTop = messagesList.scrollHeight;
+    function fileExtension(name) {
+        const dot = (name || "").lastIndexOf(".");
+        return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
+    }
+
+    function fileBadge(name) {
+        const ext = fileExtension(name);
+        return ext ? ext.toUpperCase().slice(0, 4) : "FILE";
     }
 
     function addSystemMessage(message) {
@@ -94,45 +134,106 @@
         }, 1200);
     }
 
+    function openLightbox(src) {
+        lightboxImage.src = src;
+        lightbox.hidden = false;
+    }
+
+    function closeLightbox() {
+        lightbox.hidden = true;
+        lightboxImage.removeAttribute("src");
+    }
+
+    function renderImageMessage(bubble, message) {
+        bubble.classList.add("image-bubble");
+        const image = document.createElement("img");
+        image.className = "chat-image";
+        image.src = message.content;
+        image.alt = message.fileName || "Shared image";
+        image.loading = "lazy";
+        image.addEventListener("click", () => openLightbox(message.content));
+        image.addEventListener("load", scrollToBottom);
+        bubble.appendChild(image);
+    }
+
+    function renderFileMessage(bubble, message) {
+        bubble.classList.add("file-bubble");
+
+        const card = document.createElement("div");
+        card.className = "file-card";
+
+        const icon = document.createElement("span");
+        icon.className = "file-icon";
+        icon.textContent = fileBadge(message.fileName);
+
+        const meta = document.createElement("div");
+        meta.className = "file-meta";
+
+        const name = document.createElement("span");
+        name.className = "file-name";
+        name.textContent = message.fileName || "file";
+
+        const size = document.createElement("span");
+        size.className = "file-size";
+        size.textContent = formatFileSize(message.fileSize || 0);
+
+        meta.append(name, size);
+
+        const download = document.createElement("a");
+        download.className = "file-download";
+        download.href = message.content;
+        download.download = message.fileName || "file";
+        download.textContent = "Download";
+
+        card.append(icon, meta, download);
+        bubble.appendChild(card);
+    }
+
+    function renderStickerMessage(bubble, message) {
+        bubble.classList.add("sticker-bubble");
+        const image = document.createElement("img");
+        image.className = "chat-sticker";
+        image.src = message.content;
+        image.alt = message.fileName || "sticker";
+        image.loading = "lazy";
+        image.addEventListener("load", scrollToBottom);
+        bubble.appendChild(image);
+    }
+
     function addChatMessage(message) {
-        const isMine = message.sender.toLowerCase() === currentUsername.toLowerCase();
+        const isMine = (message.user || "").toLowerCase() === currentUsername.toLowerCase();
         const row = document.createElement("article");
         row.className = `message-row ${isMine ? "mine" : "theirs"}`;
 
         const sender = document.createElement("div");
         sender.className = "message-sender";
-        sender.textContent = isMine ? "Me" : message.sender;
+        sender.textContent = isMine ? "Me" : message.user;
 
         const bubble = document.createElement("div");
         bubble.className = "message-bubble";
 
-        if (message.type === "sticker") {
-            const image = document.createElement("img");
-            image.className = "sticker-image";
-            image.src = `/stickers/${message.content}.png`;
-            image.alt = `${message.content} sticker`;
-            bubble.appendChild(image);
-        } else if (message.type === "file") {
-            const link = document.createElement("a");
-            link.className = "file-link";
-            link.href = message.fileUrl;
-            link.download = message.fileName;
-            link.target = "_blank";
-            link.rel = "noopener";
-            link.textContent = message.fileName;
-
-            const meta = document.createElement("span");
-            meta.className = "file-meta";
-            meta.textContent = formatFileSize(message.fileSize);
-
-            bubble.append(link, meta);
-        } else {
-            bubble.textContent = message.content;
+        switch (message.type) {
+            case "image":
+                renderImageMessage(bubble, message);
+                break;
+            case "file":
+                renderFileMessage(bubble, message);
+                break;
+            case "sticker":
+                renderStickerMessage(bubble, message);
+                break;
+            default:
+                bubble.textContent = message.content;
+                break;
         }
 
         row.append(sender, bubble);
         messagesList.appendChild(row);
         scrollToBottom();
+    }
+
+    function sendChatMessage(payload) {
+        return connection.invoke("SendChatMessage", payload);
     }
 
     async function setUsername(username) {
@@ -141,8 +242,149 @@
         await connection.invoke("SetUsername", currentUsername);
     }
 
+    async function ensureUsername() {
+        if (!currentUsername) {
+            await setUsername(usernameInput.value);
+        }
+    }
+
+    function insertAtCaret(input, text) {
+        const start = input.selectionStart ?? input.value.length;
+        const end = input.selectionEnd ?? input.value.length;
+        input.value = input.value.slice(0, start) + text + input.value.slice(end);
+        const caret = start + text.length;
+        input.setSelectionRange(caret, caret);
+        input.focus();
+    }
+
+    // --- Emoji / sticker panel state (mutually exclusive) ---
+    function setEmojiOpen(open) {
+        emojiPicker.classList.toggle("open", open);
+        emojiButton.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+            setStickerOpen(false);
+        }
+    }
+
+    function setStickerOpen(open) {
+        stickerPicker.classList.toggle("open", open);
+        stickerButton.setAttribute("aria-expanded", open ? "true" : "false");
+        if (open) {
+            setEmojiOpen(false);
+        }
+    }
+
+    function closePanels() {
+        setEmojiOpen(false);
+        setStickerOpen(false);
+    }
+
+    // --- Attachment preview ---
+    function clearAttachment() {
+        pendingAttachment = null;
+        attachInput.value = "";
+        attachPreview.innerHTML = "";
+        attachPreview.hidden = true;
+    }
+
+    function renderAttachPreview(attachment) {
+        attachPreview.innerHTML = "";
+
+        let media;
+        if (attachment.kind === "image") {
+            media = document.createElement("img");
+            media.className = "attach-thumb";
+            media.src = attachment.dataUrl;
+            media.alt = attachment.name;
+        } else {
+            media = document.createElement("span");
+            media.className = "attach-file-icon";
+            media.textContent = fileBadge(attachment.name);
+        }
+
+        const info = document.createElement("div");
+        info.className = "attach-info";
+
+        const name = document.createElement("span");
+        name.className = "attach-name";
+        name.textContent = attachment.name;
+        info.appendChild(name);
+
+        if (attachment.kind === "file") {
+            const size = document.createElement("span");
+            size.className = "attach-size";
+            size.textContent = formatFileSize(attachment.size);
+            info.appendChild(size);
+        }
+
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "remove-image-button";
+        remove.textContent = "Remove";
+        remove.addEventListener("click", clearAttachment);
+
+        attachPreview.append(media, info, remove);
+        attachPreview.hidden = false;
+    }
+
+    async function sendPendingAttachment() {
+        const attachment = pendingAttachment;
+        if (!attachment) {
+            return;
+        }
+
+        if (attachment.kind === "image") {
+            await sendChatMessage({
+                type: "image",
+                content: attachment.dataUrl,
+                fileName: attachment.name,
+                mimeType: attachment.type
+            });
+        } else {
+            await sendChatMessage({
+                type: "file",
+                content: attachment.dataUrl,
+                fileName: attachment.name,
+                mimeType: attachment.type,
+                fileSize: attachment.size
+            });
+        }
+
+        clearAttachment();
+    }
+
+    async function sendSticker(sticker) {
+        try {
+            await ensureUsername();
+            await sendChatMessage({ type: "sticker", content: sticker.url, fileName: sticker.name });
+            closePanels();
+        } catch (error) {
+            addSystemMessage("Could not send sticker.");
+            console.error(error);
+        }
+    }
+
+    // --- Build sticker picker grid ---
+    STICKERS.forEach(sticker => {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "sticker-option";
+        option.setAttribute("role", "menuitem");
+        option.title = sticker.name;
+
+        const image = document.createElement("img");
+        image.src = sticker.url;
+        image.alt = sticker.name;
+        image.loading = "lazy";
+
+        option.appendChild(image);
+        option.addEventListener("click", () => sendSticker(sticker));
+        stickerPicker.appendChild(option);
+    });
+
+    // --- SignalR event handlers ---
     connection.on("ReceiveMessage", message => {
-        typingUsers.delete(message.sender);
+        typingUsers.delete(message.user);
         updateTypingIndicator();
         addChatMessage(message);
     });
@@ -185,6 +427,7 @@
     });
     connection.onclose(() => setStatus("Disconnected", false));
 
+    // --- Username ---
     nameForm.addEventListener("submit", async event => {
         event.preventDefault();
 
@@ -196,22 +439,28 @@
         }
     });
 
+    // --- Composer submit: sends a pending attachment and/or text ---
     messageForm.addEventListener("submit", async event => {
         event.preventDefault();
         const message = messageInput.value.trim();
 
-        if (!message) {
+        if (!message && !pendingAttachment) {
             return;
         }
 
         try {
-            if (!currentUsername) {
-                await setUsername(usernameInput.value);
+            await ensureUsername();
+
+            if (pendingAttachment) {
+                await sendPendingAttachment();
             }
 
-            await connection.invoke("SendMessage", message);
+            if (message) {
+                await sendChatMessage({ type: "text", content: message });
+                messageInput.value = "";
+            }
+
             await sendTypingState(false);
-            messageInput.value = "";
             messageInput.focus();
         } catch (error) {
             addSystemMessage("Could not send message.");
@@ -236,87 +485,96 @@
         sendTypingState(false).catch(error => console.error(error));
     });
 
-    document.querySelectorAll(".emoji-button").forEach(button => {
-        button.addEventListener("click", () => {
-            messageInput.value += button.dataset.emoji;
-            messageInput.focus();
+    // --- Emoji picker ---
+    emojiButton.addEventListener("click", event => {
+        event.stopPropagation();
+        setEmojiOpen(!emojiPicker.classList.contains("open"));
+    });
+
+    emojiPicker.querySelectorAll(".emoji-option").forEach(option => {
+        option.addEventListener("click", () => {
+            insertAtCaret(messageInput, option.textContent);
         });
     });
 
-    document.querySelectorAll(".sticker-button").forEach(button => {
-        button.addEventListener("click", async () => {
-            try {
-                if (!currentUsername) {
-                    await setUsername(usernameInput.value);
-                }
+    // --- Sticker picker ---
+    stickerButton.addEventListener("click", event => {
+        event.stopPropagation();
+        setStickerOpen(!stickerPicker.classList.contains("open"));
+    });
 
-                await connection.invoke("SendSticker", button.dataset.sticker);
-            } catch (error) {
-                addSystemMessage("Could not send sticker.");
-                console.error(error);
+    // --- Close panels on outside click / Escape ---
+    document.addEventListener("click", event => {
+        const insideEmoji = emojiPicker.contains(event.target) || emojiButton.contains(event.target);
+        const insideSticker = stickerPicker.contains(event.target) || stickerButton.contains(event.target);
+        if (!insideEmoji && !insideSticker) {
+            closePanels();
+        }
+    });
+
+    document.addEventListener("keydown", event => {
+        if (event.key === "Escape") {
+            closePanels();
+            if (!lightbox.hidden) {
+                closeLightbox();
             }
-        });
+        }
     });
 
-    fileInput.addEventListener("change", async () => {
-        const file = fileInput.files[0];
+    // --- Attachment selection (image -> inline image, otherwise file card) ---
+    attachInput.addEventListener("change", async () => {
+        const file = attachInput.files[0];
 
         if (!file) {
             return;
         }
 
-        try {
-            if (!currentUsername) {
-                await setUsername(usernameInput.value);
-            }
-        } catch (error) {
-            uploadStatus.textContent = "Set a username before sending files.";
-            console.error(error);
+        const isImage = ALLOWED_IMAGE_TYPES.has(file.type);
+
+        if (!isImage && !ALLOWED_FILE_EXTENSIONS.has(fileExtension(file.name))) {
+            addSystemMessage("Unsupported file type.");
+            attachInput.value = "";
             return;
         }
 
-        const formData = new FormData();
-        formData.append("chatFile", file);
+        if (file.size > MAX_BYTES) {
+            addSystemMessage("File must be 5 MB or smaller.");
+            attachInput.value = "";
+            return;
+        }
 
-        const request = new XMLHttpRequest();
-        request.open("POST", "/?handler=UploadFile");
-        request.setRequestHeader("RequestVerificationToken", antiForgeryToken);
+        try {
+            await ensureUsername();
+        } catch (error) {
+            addSystemMessage("Set a username before sending attachments.");
+            console.error(error);
+            attachInput.value = "";
+            return;
+        }
 
-        request.upload.addEventListener("progress", event => {
-            if (!event.lengthComputable) {
-                uploadStatus.textContent = `Uploading ${file.name}...`;
-                return;
-            }
-
-            const progress = Math.round((event.loaded / event.total) * 100);
-            uploadStatus.textContent = `Uploading ${file.name}: ${progress}%`;
-        });
-
-        request.addEventListener("load", async () => {
-            try {
-                if (request.status < 200 || request.status >= 300) {
-                    const error = JSON.parse(request.responseText || "{}").error || "Upload failed.";
-                    uploadStatus.textContent = error;
-                    return;
-                }
-
-                const uploaded = JSON.parse(request.responseText);
-                await connection.invoke("SendFileMessage", uploaded.fileName, uploaded.fileSize, uploaded.fileUrl);
-                uploadStatus.textContent = `Uploaded ${uploaded.fileName}.`;
-                fileInput.value = "";
-            } catch (error) {
-                uploadStatus.textContent = "Could not share uploaded file.";
-                console.error(error);
-            }
-        });
-
-        request.addEventListener("error", () => {
-            uploadStatus.textContent = "Upload failed.";
-        });
-
-        request.send(formData);
+        const reader = new FileReader();
+        reader.onload = () => {
+            pendingAttachment = {
+                kind: isImage ? "image" : "file",
+                dataUrl: reader.result,
+                name: file.name,
+                type: file.type,
+                size: file.size
+            };
+            renderAttachPreview(pendingAttachment);
+            messageInput.focus();
+        };
+        reader.onerror = () => {
+            addSystemMessage("Could not read the selected file.");
+            attachInput.value = "";
+        };
+        reader.readAsDataURL(file);
     });
 
+    // --- Lightbox ---
+    lightbox.addEventListener("click", closeLightbox);
+
+    // --- Start connection ---
     connection.start()
         .then(async () => {
             setStatus("Connected", true);
